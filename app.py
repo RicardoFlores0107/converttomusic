@@ -1,55 +1,70 @@
 import requests
 import os
 import subprocess
+from flask import Flask, request, jsonify
 
-def descargar_audio_invidious(youtube_url):
-    # Extraer video ID
-    video_id = youtube_url.split("v=")[-1].split("&")[0]
+app = Flask(__name__)
 
-    invidious_base = "https://invidious.snopyta.org"
+@app.route("/descargar", methods=["POST"])
+def descargar():
+    youtube_url = request.json.get("url")
+    if not youtube_url:
+        return jsonify({"error": "No se proporcionó URL"}), 400
 
-    # Obtener datos del video
-    api_url = f"{invidious_base}/api/v1/videos/{video_id}"
-    response = requests.get(api_url)
+    try:
+        # Extraer video ID
+        video_id = youtube_url.split("v=")[-1].split("&")[0]
 
-    if response.status_code != 200:
-        print("Error accediendo a Invidious API")
-        return
+        invidious_base = "https://invidious.snopyta.org"
+        api_url = f"{invidious_base}/api/v1/videos/{video_id}"
+        response = requests.get(api_url)
 
-    data = response.json()
+        if response.status_code != 200:
+            return jsonify({"error": "Error accediendo a Invidious API"}), 500
 
-    # Buscar stream de audio
-    audio_streams = [stream for stream in data['adaptiveFormats'] if 'audio' in stream['mimeType']]
-    if not audio_streams:
-        print("No se encontró audio stream")
-        return
+        data = response.json()
 
-    # Elegir el mejor audio (ejemplo: primero de la lista)
-    audio_url = audio_streams[0]['url']
-    print(f"URL audio: {audio_url}")
+        # Buscar stream de audio
+        audio_streams = [s for s in data.get('adaptiveFormats', []) if 'audio' in s.get('mimeType', '')]
+        if not audio_streams:
+            return jsonify({"error": "No se encontró stream de audio"}), 404
 
-    # Descargar archivo temporal
-    output_temp = "temp_audio.webm"
-    r = requests.get(audio_url)
-    with open(output_temp, "wb") as f:
-        f.write(r.content)
+        audio_url = audio_streams[0]['url']
 
-    # Convertir a mp3 con ffmpeg
-    output_mp3 = f"downloads/{video_id}.mp3"
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
+        # Preparar rutas
+        output_temp = f"temp_{video_id}.webm"
+        output_dir = "downloads"
+        output_mp3 = f"{output_dir}/{video_id}.mp3"
 
-    subprocess.run([
-        "ffmpeg", "-i", output_temp, "-vn",
-        "-ar", "44100", "-ac", "2", "-b:a", "192k",
-        output_mp3
-    ])
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
-    os.remove(output_temp)
-    print(f"Archivo guardado en: {output_mp3}")
+        # Descargar el audio temporal
+        r = requests.get(audio_url)
+        with open(output_temp, "wb") as f:
+            f.write(r.content)
+
+        # Convertir a MP3
+        subprocess.run([
+            "ffmpeg", "-i", output_temp, "-vn",
+            "-ar", "44100", "-ac", "2", "-b:a", "192k",
+            output_mp3
+        ], check=True)
+
+        os.remove(output_temp)
+
+        # Retornar la URL de descarga (ajustar dominio si es necesario)
+        return jsonify({
+            "archivo": f"{video_id}.mp3",
+            "url": f"https://converttomusic.onrender.com/downloads/{video_id}.mp3"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Gunicorn necesita esto:
+# gunicorn app:app
+# (el archivo se llama app.py y la instancia es app)
 
 if __name__ == "__main__":
-    url = "https://www.youtube.com/watch?v=WGF3u7ZQm4Y"
-    descargar_audio_invidious(url)
-
-
+    app.run(host="0.0.0.0", port=5000)
