@@ -1,5 +1,4 @@
-# app.py
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
 import os
 import uuid
@@ -7,15 +6,21 @@ import uuid
 app = Flask(__name__)
 DOWNLOAD_FOLDER = "downloads"
 
+# Asegura que la carpeta de descargas exista
+if not os.path.exists(DOWNLOAD_FOLDER):
+    os.makedirs(DOWNLOAD_FOLDER)
+
 @app.route("/descargar", methods=["POST"])
 def descargar():
     url = request.json.get("url")
     if not url:
         return jsonify({"error": "Falta URL"}), 400
 
+    # Genera un nombre único
     unique_id = str(uuid.uuid4())
     output_path = f"{DOWNLOAD_FOLDER}/{unique_id}.%(ext)s"
 
+    # Configura yt_dlp para extraer audio como MP3
     opciones = {
         'format': 'bestaudio/best',
         'outtmpl': output_path,
@@ -26,16 +31,21 @@ def descargar():
         }],
     }
 
-    with yt_dlp.YoutubeDL(opciones) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(opciones) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        return jsonify({"error": f"Error al descargar: {str(e)}"}), 500
 
+    # Encuentra el archivo resultante
     filename = next((f for f in os.listdir(DOWNLOAD_FOLDER) if unique_id in f), None)
     if filename:
-        return jsonify({"filename": filename, "url": f"http://TU_DOMINIO/downloads/{filename}"})
+        file_url = f"https://TU-NOMBRE-APP.onrender.com/downloads/{filename}"
+        return jsonify({"filename": filename, "url": file_url})
     else:
-        return jsonify({"error": "Error al descargar"}), 500
+        return jsonify({"error": "Archivo no encontrado"}), 500
 
-if __name__ == "__main__":
-    if not os.path.exists(DOWNLOAD_FOLDER):
-        os.makedirs(DOWNLOAD_FOLDER)
-    app.run(host="0.0.0.0", port=5000)
+@app.route("/downloads/<filename>")
+def descargar_archivo(filename):
+    return send_from_directory(DOWNLOAD_FOLDER, filename)
+
